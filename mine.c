@@ -555,8 +555,12 @@ void coordenadasDaCelula(int celula, float *s0, float *t0, float *lado)
 
 int passadaDoBloco(int tipo)
 {
-    if (tipo == FOLHA) return PASSADA_RECORTE;
-    if (tipo == VIDRO || tipo == AGUA) return PASSADA_TRANSLUCIDA;
+    if (tipo == FOLHA || tipo == PLANTA)
+        return PASSADA_RECORTE;
+
+    if (tipo == VIDRO || tipo == AGUA)
+        return PASSADA_TRANSLUCIDA;
+
     return PASSADA_OPACA;
 }
 
@@ -663,17 +667,98 @@ void casinhaEm(int x, int z)
 /* contra o vidro: desapareceria.                                     */
 /* ------------------------------------------------------------------ */
 
-/* desenha todos os blocos de uma passada, na ordem da matriz */
+/* Desenha uma planta usando dois planos verticais cruzados.
+   A textura usada é CEL_FOLHA, que já possui transparência
+   por magenta no atlas. */
+
+void desenhaPlanta(int x, int y, int z)
+{
+    float s0, t0, lado;
+
+    /* Obtém as coordenadas da textura da folha no atlas */
+    coordenadasDaCelula(CEL_FOLHA, &s0, &t0, &lado);
+
+    /* Desliga o descarte de faces traseiras.
+       Assim, a planta aparece dos dois lados. */
+    glDisable(GL_CULL_FACE);
+
+    /* Ativa a textura e o teste de transparência */
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.5f);
+
+    /* Cor branca para não alterar as cores originais da textura */
+    glColor3f(1.0f, 1.0f, 1.0f);
+
+    glPushMatrix();
+    glTranslatef((float)x, (float)y, (float)z);
+
+    /* Primeiro plano: diagonal de um canto ao outro */
+    glBegin(GL_QUADS);
+
+        glTexCoord2f(s0,       t0 + lado);
+        glVertex3f(0.15f, 0.0f, 0.15f);
+
+        glTexCoord2f(s0 + lado, t0 + lado);
+        glVertex3f(0.85f, 0.0f, 0.85f);
+
+        glTexCoord2f(s0 + lado, t0);
+        glVertex3f(0.85f, 0.9f, 0.85f);
+
+        glTexCoord2f(s0,       t0);
+        glVertex3f(0.15f, 0.9f, 0.15f);
+
+    glEnd();
+
+    /* Segundo plano: diagonal cruzada com o primeiro */
+    glBegin(GL_QUADS);
+
+        glTexCoord2f(s0,       t0 + lado);
+        glVertex3f(0.15f, 0.0f, 0.85f);
+
+        glTexCoord2f(s0 + lado, t0 + lado);
+        glVertex3f(0.85f, 0.0f, 0.15f);
+
+        glTexCoord2f(s0 + lado, t0);
+        glVertex3f(0.85f, 0.9f, 0.15f);
+
+        glTexCoord2f(s0,       t0);
+        glVertex3f(0.15f, 0.9f, 0.85f);
+
+    glEnd();
+
+    glPopMatrix();
+
+    /* Restaura os estados usados pelo restante do cenário */
+    glDisable(GL_ALPHA_TEST);
+    glEnable(GL_CULL_FACE);
+}
+
+
 static void desenhaPassada(int passada)
 {
     int x, y, z;
+    int tipo;
 
     for (x = 0; x < LADO; x++)
         for (y = 0; y < ALTURA_MUNDO; y++)
-            for (z = 0; z < LADO; z++)
-                if (mundo[x][y][z] != VAZIO &&
-                    passadaDoBloco(mundo[x][y][z]) == passada)
-                    blocoEm(mundo[x][y][z], x, y, z);
+            for (z = 0; z < LADO; z++) {
+
+                tipo = mundo[x][y][z];
+
+                if (tipo == VAZIO)
+                    continue;
+
+                if (passadaDoBloco(tipo) != passada)
+                    continue;
+
+                if (tipo == PLANTA) {
+                    desenhaPlanta(x, y, z);
+                }
+                else {
+                    blocoEm(tipo, x, y, z);
+                }
+            }
 }
 
 /* passadas 1 e 2 */
@@ -1141,7 +1226,14 @@ void construirMundo(void)
 
     arvoreEm(13, 6);                        /* no gramado, à direita da montanha */
     casinhaEm(4, 7);                        /* à esquerda de onde o personagem começa */
-
+ 
+    colocaBloco(PLANTA, 2, 3, 10);          /* Plantas espalhadas pelo gramado */
+    colocaBloco(PLANTA, 3, 3, 10);
+    colocaBloco(PLANTA, 9, 3, 10);
+    colocaBloco(PLANTA, 10, 3, 10);
+    colocaBloco(PLANTA, 8, 3, 12);
+    colocaBloco(PLANTA, 14, 3, 10);
+   
     nuvemEm(1, 2, 5, 3);                    /* sobre a montanha */
     nuvemEm(10, 0, 4, 2);                   /* sobre a árvore, mais ao fundo */
 }
