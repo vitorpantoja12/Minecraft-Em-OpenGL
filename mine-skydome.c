@@ -1149,10 +1149,11 @@ unsigned char mundo[LADO][ALTURA_MUNDO][LADO];
 #define NUM_ITENS 3
 
 ItemDrop itens[NUM_ITENS] = {
-    { 2.5f, 3.05f, 10.5f, CEL_FOLHA,  0.0f },  /* muda */
-    { 9.5f, 3.05f, 10.5f, CEL_TERRA,  2.0f },  /* terra */
-    {14.5f, 3.05f, 10.5f, SEM_TEXTURA, 4.0f } /* maçã */
+    {11.5f, 3.05f, 10.5f, CEL_FOLHA,  0.0f }, /* muda */
+    {12.5f, 3.05f, 10.5f, CEL_TERRA,  2.0f }, /* terra */
+    {13.5f, 3.05f, 10.5f, SEM_TEXTURA, 4.0f } /* maçã */
 };
+
 
 /* Desenha os itens espalhados pelo cenário */
 void desenhaItensCenario(void){
