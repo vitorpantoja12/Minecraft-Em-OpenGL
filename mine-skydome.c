@@ -1007,6 +1007,7 @@ static const int bitDaFace[6] = {
 };
 
 static const float brilhoDaFace[6] = { 0.80f, 0.80f, 0.65f, 0.65f, 1.00f, 0.50f };
+static const float normalDaFace[6][3] = {{0,0,1}, {0,0,-1}, {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}};
 
 static const float verticesDaFace[6][4][3] = {
     { {0,0,1}, {1,0,1}, {1,1,1}, {0,1,1} },     /* frente (z = 1) */
@@ -1029,6 +1030,7 @@ void desenhaBloco(int tipo, float tom, int faces)
     glBegin(GL_QUADS);
     for (f = 0; f < 6; f++) {
         if (!(faces & bitDaFace[f])) continue;
+        glNormal3f(normalDaFace[f][0], normalDaFace[f][1], normalDaFace[f][2]);
 
         if (texturizado) {
             float s0, t0, lado;
@@ -1040,14 +1042,14 @@ void desenhaBloco(int tipo, float tom, int faces)
             float s[4] = { s0, s0 + lado, s0 + lado, s0 };
             float t[4] = { t0 + lado, t0 + lado, t0, t0 };
 
-            glColor3f(b, b, b);
+            glColor3f(1.0f, 1.0f, 1.0f);
             for (v = 0; v < 4; v++) {
                 glTexCoord2f(s[v], t[v]);
                 glVertex3f(verticesDaFace[f][v][0], verticesDaFace[f][v][1],
                            verticesDaFace[f][v][2]);
             }
         } else {
-            corDaFace(tipo, brilhoDaFace[f], tom);
+            corDaFace(tipo, 1.0f, tom);
             for (v = 0; v < 4; v++)
                 glVertex3f(verticesDaFace[f][v][0], verticesDaFace[f][v][1],
                            verticesDaFace[f][v][2]);
@@ -1134,6 +1136,194 @@ int mapa[LADO][LADO] = {
 int alturaDoTerreno(int x, int z)
 {
     return mapa[z][x];
+}
+
+typedef struct { float r, g, b; } Cor;
+
+static Cor lerp(Cor a, Cor b, float t)
+{
+    Cor c = { a.r + (b.r - a.r) * t,
+              a.g + (b.g - a.g) * t,
+              a.b + (b.b - a.b) * t };
+    return c;
+}
+
+#define INCLINACAO_SOL (25.0f * PI / 180.0f)    /* o caminho do sol é inclinado, para as faces +z e -z também receberem luz */
+
+float anguloSol = 60.0f;        /* graus: 0 nasce, 90 meio-dia, 180 se põe, 270 meia-noite */
+float duracaoCiclo = 180.0f;    /* segundos por volta; a tecla T alterna com 20 */
+
+Cor corHorizonte = { 0.53f, 0.81f, 0.92f };     /* a cada quadro, essas cores são atualizadas */
+Cor corZenite    = { 0.25f, 0.50f, 0.90f };
+
+static const Cor zenDia   = { 0.25f, 0.50f, 0.90f }, zenNoite = { 0.01f, 0.01f, 0.06f };
+static const Cor horDia   = { 0.53f, 0.81f, 0.92f }, horNoite = { 0.04f, 0.05f, 0.12f };
+static const Cor luzDia   = { 1.00f, 0.96f, 0.88f }, luzNoite = { 0.10f, 0.12f, 0.25f };
+static const Cor ambDia   = { 0.35f, 0.35f, 0.40f }, ambNoite = { 0.07f, 0.07f, 0.14f };
+
+GLuint texSol, texLua;
+
+static GLuint carregaAstro(const char *nome)
+{
+    int l, a, i;
+    unsigned char *rgb = lerPPM(nome, &l, &a);
+    unsigned char *rgba;
+    GLuint tex;
+
+    if (rgb == NULL) { printf("Erro: não consegui ler %s\n", nome); exit(1); }
+
+    rgba = (unsigned char *)malloc(4 * l * a);
+    for (i = 0; i < l * a; i++) {
+        rgba[4*i]   = rgb[3*i];
+        rgba[4*i+1] = rgb[3*i+1];
+        rgba[4*i+2] = rgb[3*i+2];
+        rgba[4*i+3] = (rgb[3*i] == 255 && rgb[3*i+1] == 0 && rgb[3*i+2] == 255) ? 0 : 255;
+    }
+
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, l, a, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);   /* pixelado, como o resto */
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, atlas);
+
+    free(rgb);
+    free(rgba);
+    return tex;
+}
+
+/* direção do sol (do mundo PARA o sol); o sol desenhado usa a mesma conta */
+static void direcaoDoSol(float a, float *x, float *y, float *z)
+{
+    *x = cosf(a);
+    *y = sinf(a) * cosf(INCLINACAO_SOL);
+    *z = sinf(a) * sinf(INCLINACAO_SOL);
+}
+
+static float suave(float t)                     /* 0..1 com transição suave */
+{
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    return t * t * (3.0f - 2.0f * t);
+}
+
+void atualizaCeuELuz(void)
+{
+    float a = anguloSol * PI / 180.0f;
+    float altura = sinf(a);                             /* +1 meio-dia, -1 meia-noite */
+    float t = suave((altura + 0.15f) / 0.35f);          /* 0 noite, 1 dia */
+    float forca = suave(fabsf(altura) / 0.25f);         /* a luz direta some perto do horizonte */
+    float sx, sy, sz, sinal = (altura >= 0.0f) ? 1.0f : -1.0f;
+    Cor luz, amb;
+    GLfloat pos[4], dif[4], am4[4], neb[4];
+
+    direcaoDoSol(a, &sx, &sy, &sz);
+
+    corZenite    = lerp(zenNoite, zenDia, t);
+    corHorizonte = lerp(horNoite, horDia, t);
+    luz = lerp(luzNoite, luzDia, t);
+    amb = lerp(ambNoite, ambDia, t);
+
+    /* de dia a luz vem do sol; de noite, da lua (lado oposto) */
+    pos[0] = sinal * sx; pos[1] = sinal * sy; pos[2] = sinal * sz; pos[3] = 0.0f;
+    dif[0] = luz.r * forca; dif[1] = luz.g * forca; dif[2] = luz.b * forca; dif[3] = 1.0f;
+    am4[0] = amb.r; am4[1] = amb.g; am4[2] = amb.b; am4[3] = 1.0f;
+    neb[0] = corHorizonte.r; neb[1] = corHorizonte.g; neb[2] = corHorizonte.b; neb[3] = 1.0f;
+
+    glLightfv(GL_LIGHT0, GL_POSITION, pos);             /* depois do gluLookAt! */
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, dif);
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, am4);
+    glFogfv(GL_FOG_COLOR, neb);                         /* neblina = cor do horizonte */
+    glClearColor(neb[0], neb[1], neb[2], 1.0f);
+}
+
+static void astro(GLuint tex, float tam, float dist)
+{
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glBegin(GL_QUADS);                  /* quadrado no plano x = dist, de frente para a origem */
+    glTexCoord2f(0, 1); glVertex3f(dist, -tam, -tam);
+    glTexCoord2f(1, 1); glVertex3f(dist, -tam,  tam);
+    glTexCoord2f(1, 0); glVertex3f(dist,  tam,  tam);
+    glTexCoord2f(0, 0); glVertex3f(dist,  tam, -tam);
+    glEnd();
+}
+
+void desenhaDomo(void)
+{
+    const int FAIXAS = 12, FATIAS = 24;
+    const float ELEV_MIN = -PI / 8.0f;      /* um pouco abaixo do horizonte */
+    float ox, oy, oz;
+    int i, j, k;
+
+    if (projecaoOrtogonal) return;          /* o domo não faz sentido na ortográfica */
+
+    posicaoDoOlho(&ox, &oy, &oz);
+
+    glPushMatrix();
+    glTranslatef(ox, oy, oz);               /* regra 1: preso à câmera */
+
+    glDepthMask(GL_FALSE);                  /* regra 2: sem profundidade */
+    glDisable(GL_LIGHTING);
+    glDisable(GL_FOG);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_CULL_FACE);
+
+    for (i = 0; i < FAIXAS; i++) {          /* uma faixa por anel de altura */
+        float e0 = ELEV_MIN + (PI / 2 - ELEV_MIN) * i / FAIXAS;
+        float e1 = ELEV_MIN + (PI / 2 - ELEV_MIN) * (i + 1) / FAIXAS;
+        float e[2];
+        e[0] = e0; e[1] = e1;
+
+        glBegin(GL_QUAD_STRIP);
+        for (j = 0; j <= FATIAS; j++) {
+            float az = 2.0f * PI * j / FATIAS;
+            for (k = 0; k < 2; k++) {
+                float u = sinf(e[k]);       /* 0 no horizonte, 1 no zênite */
+                Cor c;
+                if (u < 0.0f) u = 0.0f;
+                u = powf(u, 0.6f);          /* faixa do horizonte mais larga */
+                c = lerp(corHorizonte, corZenite, u);
+                glColor3f(c.r, c.g, c.b);
+                glVertex3f(cosf(e[k]) * cosf(az),
+                           sinf(e[k]),
+                           cosf(e[k]) * sinf(az));
+            }
+        }
+        glEnd();
+    }
+
+    /* --- sol e lua: presos ao céu, não são billboards --- */
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor3f(1.0f, 1.0f, 1.0f);
+
+    if (sinf(anguloSol * PI / 180.0f) > -0.2f) {        /* some abaixo do horizonte */
+        glPushMatrix();
+        glRotatef(25.0f, 1, 0, 0);                      /* a mesma inclinação da luz */
+        glRotatef(anguloSol, 0, 0, 1);                  /* o ângulo que gira a luz */
+        astro(texSol, 0.08f, 0.9f);
+        glPopMatrix();
+    }
+    if (sinf(anguloSol * PI / 180.0f) < 0.2f) {
+        glPushMatrix();
+        glRotatef(25.0f, 1, 0, 0);
+        glRotatef(anguloSol + 180.0f, 0, 0, 1);         /* lua: lado oposto ao sol */
+        astro(texLua, 0.06f, 0.9f);
+        glPopMatrix();
+    }
+
+    glDisable(GL_BLEND);
+    glBindTexture(GL_TEXTURE_2D, atlas);
+
+    glDepthMask(GL_TRUE);                   /* devolve o estado */
+    glEnable(GL_CULL_FACE);
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_FOG);
+    glEnable(GL_LIGHTING);
+    glPopMatrix();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1687,6 +1877,7 @@ void teclado(unsigned char tecla, int x, int y)
             break;
         case '+': case '=': mudaZoom(+1); break;    /* '=' é o + sem Shift */
         case '-': case '_': mudaZoom(-1); break;
+        case 't': duracaoCiclo = (duracaoCiclo > 60.0f) ? 20.0f : 180.0f; break;
     }
 }
 
@@ -1876,6 +2067,9 @@ void atualiza(void)
         glutPostRedisplay();                /* lido, para o primeiro dt depois */
         return;                             /* de fechar não ser enorme */
     }
+
+    anguloSol += (360.0f / duracaoCiclo) * dt;
+    if (anguloSol >= 360.0f) anguloSol -= 360.0f;
 
     float passo = VELOCIDADE * dt;
     float giro  = VELOCIDADE_GIRO * dt;
@@ -2067,6 +2261,8 @@ void desenhaMenu(void)
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
     glDisable(GL_TEXTURE_2D);               /* painel e texto em cor sólida */
+    glDisable(GL_LIGHTING);
+    glDisable(GL_FOG);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -2116,6 +2312,8 @@ void desenhaMenu(void)
     glEnable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_TEXTURE_2D);
+    glEnable(GL_LIGHTING);
+    glEnable(GL_FOG);
     glPopMatrix();                                      /* modelo-visualização */
     glMatrixMode(GL_PROJECTION);
     glPopMatrix();
@@ -2145,10 +2343,12 @@ void desenha(void)
 {
     /* apaga a cor (fica o azul do glClearColor) e o buffer de
        profundidade, que guarda a distância de cada pixel */
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glLoadIdentity();
     posicionaCamera();
+    atualizaCeuELuz();          /* luz e cores, depois do gluLookAt */
+    desenhaDomo();              /* primeiro, sem profundidade */
 
     /* opacos antes dos semitransparentes: a mistura precisa do que está
        atrás já no buffer, e isso inclui o personagem */
@@ -2205,6 +2405,8 @@ int main(int argc, char **argv)
     printf("OpenGL %s | %s\n", glGetString(GL_VERSION), glGetString(GL_RENDERER));
 
     carregaAtlas();                         /* lê o atlas e liga a textura */
+    texSol = carregaAstro("sol.ppm");
+    texLua = carregaAstro("lua.ppm");
 
     /* as teclas são lidas por estado: a repetição automática do sistema
        operacional não acrescenta nada e é desligada */
@@ -2230,6 +2432,20 @@ int main(int argc, char **argv)
     glEnable(GL_DEPTH_TEST);                /* o mais próximo cobre o mais distante,
                                                não importa a ordem de desenho */
     glEnable(GL_CULL_FACE);                 /* não desenha faces de costas */
+    glEnable(GL_LIGHTING);
+    glEnable(GL_LIGHT0);
+    glEnable(GL_COLOR_MATERIAL);
+    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+    glEnable(GL_NORMALIZE);
+
+    GLfloat corNeblina[4] = { 0.53f, 0.81f, 0.92f, 1.0f };  /* azul do horizonte de dia */
+
+    glEnable(GL_FOG);
+    glFogi(GL_FOG_MODE, GL_LINEAR);
+    glFogf(GL_FOG_START, 8.0f);
+    glFogf(GL_FOG_END, 26.0f);
+    glFogfv(GL_FOG_COLOR, corNeblina);
+    
     glClearColor(0.53f, 0.81f, 0.92f, 1.0f);   /* cor de fundo: azul do céu */
 
     construirMundo();                       /* preenche a matriz, uma vez só */

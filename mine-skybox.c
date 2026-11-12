@@ -394,20 +394,35 @@ void desenhaMenu(void);             /* chamada por desenha(), depois da cena */
 /* não for um P6 completo, com no máximo 4096 pixels de lado.        */
 /* ------------------------------------------------------------------ */
 
+/* lê um inteiro do cabeçalho do PPM, pulando espaços e comentários (#).
+   Consome também o caractere seguinte ao número (o espaço do cabeçalho) */
+static int leInteiro(FILE *f, int *valor)
+{
+    int c = fgetc(f), n = 0;
+
+    for (;;) {
+        while (c == ' ' || c == '\n' || c == '\r' || c == '\t') c = fgetc(f);
+        if (c != '#') break;
+        while (c != '\n' && c != EOF) c = fgetc(f);     /* pula o comentário */
+    }
+    if (c < '0' || c > '9') return 0;
+    while (c >= '0' && c <= '9') { n = n * 10 + (c - '0'); c = fgetc(f); }
+    *valor = n;
+    return 1;
+}
+
 unsigned char *lerPPM(const char *nome, int *l, int *a)
 {
     FILE *f = fopen(nome, "rb");
     int max;
 
     if (f == NULL) return NULL;
-    /* o teto nas medidas impede que a conta do malloc estoure com um
-       cabeçalho absurdo; o atlas tem 64 x 64 */
-    if (fscanf(f, "P6 %d %d %d", l, a, &max) != 3 || max != 255 ||
-        *l <= 0 || *a <= 0 || *l > 4096 || *a > 4096) {
+    if (fgetc(f) != 'P' || fgetc(f) != '6' ||
+        !leInteiro(f, l) || !leInteiro(f, a) || !leInteiro(f, &max) ||
+        max != 255 || *l <= 0 || *a <= 0 || *l > 4096 || *a > 4096) {
         fclose(f);
         return NULL;
     }
-    fgetc(f);                               /* o espaço após o cabeçalho */
 
     unsigned char *rgb = (unsigned char *)malloc(3 * *l * *a);
     if (rgb != NULL && fread(rgb, 3, *l * *a, f) != (size_t)(*l * *a)) {
@@ -550,6 +565,20 @@ void coordenadasDaCelula(int celula, float *s0, float *t0, float *lado)
     *t0 = (celula / CELULAS_POR_LADO) * *lado;
 }
 
+/* Itens largados no chão: ficam fora da matriz mundo */
+typedef struct {
+    float x, y, z;  /* posição no cenário */
+    int celula;     /* célula do atlas */
+    float fase;     /* diferença na flutuação */
+} ItemDrop;
+
+#define NUM_ITENS 3
+
+ItemDrop itens[NUM_ITENS] = {
+    { 2.5f, 3.05f, 10.5f, CEL_FOLHA,  0.0f },  /* muda */
+    { 9.5f, 3.05f, 10.5f, CEL_TERRA,  2.0f },  /* terra */
+    {14.5f, 3.05f, 10.5f, SEM_TEXTURA, 4.0f } /* maçã */
+};
 
 /* Desenha um item como uma imagem que acompanha a direção da câmera */
 void desenhaItem(ItemDrop item, float tempo)
@@ -1146,20 +1175,6 @@ int alturaDoTerreno(int x, int z)
 
 unsigned char mundo[LADO][ALTURA_MUNDO][LADO];
 
-/* Itens largados no chão: ficam fora da matriz mundo */
-typedef struct {
-    float x, y, z;  /* posição no cenário */
-    int celula;     /* célula do atlas */
-    float fase;     /* diferença na flutuação */
-} ItemDrop;
-
-#define NUM_ITENS 3
-
-ItemDrop itens[NUM_ITENS] = {
-    { 2.5f, 3.05f, 10.5f, CEL_FOLHA,  0.0f },  /* muda */
-    { 9.5f, 3.05f, 10.5f, CEL_TERRA,  2.0f },  /* terra */
-    {14.5f, 3.05f, 10.5f, SEM_TEXTURA, 4.0f } /* maçã */
-};
 
 /* Desenha os itens espalhados pelo cenário */
 void desenhaItensCenario(void){
@@ -1967,12 +1982,15 @@ void carregaCeu(void)
     glBindTexture(GL_TEXTURE_2D, atlas);
 }
 
+static const int celulaCeu[6] = { 1, 5, 2, 3, 4, 0 };  /* célula do ceu.ppm em cada face */
+static const int giroCeu[6]   = { 2, 2, 2, 2, 1, 3 };  /* giro de cada face (2 = o padrão de antes) */
+
 void desenhaSkybox(void)
 {
     float ox, oy, oz;
     int f, v;
     float w = 1.0f / CEU_COL, h = 1.0f / CEU_LIN;
-    float meioS = 0.5f / 192.0f, meioT = 0.5f / 128.0f;  /* meio texel */
+    float meioS = 0.5f / 768.0f, meioT = 0.5f / 512.0f;  /* meio texel */
 
     posicaoDoOlho(&ox, &oy, &oz);
 
@@ -1986,20 +2004,22 @@ void desenhaSkybox(void)
     glColor3f(1.0f, 1.0f, 1.0f);            /* GL_MODULATE: branco = cor pura */
 
     glBegin(GL_QUADS);
-    for (f = 0; f < 6; f++) {               /* face f usa a célula f */
-        float s0 = (f % CEU_COL) * w + meioS, s1 = (f % CEU_COL + 1) * w - meioS;
-        float t0 = (f / CEU_COL) * h + meioT, t1 = (f / CEU_COL + 1) * h - meioT;
+    for (f = 0; f < 6; f++) {
+    int c = celulaCeu[f];
+    float s0 = (c % CEU_COL) * w + meioS, s1 = (c % CEU_COL + 1) * w - meioS;
+    float t0 = (c / CEU_COL) * h + meioT, t1 = (c / CEU_COL + 1) * h - meioT;
 
-        /* visto de dentro, o eixo s fica espelhado: por isso s1 vem antes */
-        float s[4] = { s1, s0, s0, s1 };
-        float t[4] = { t1, t1, t0, t0 };
+    /* cantos da célula: cima-esq, cima-dir, baixo-dir, baixo-esq */
+    float cs[4] = { s0, s1, s1, s0 };
+    float ct[4] = { t0, t0, t1, t1 };
 
-        for (v = 0; v < 4; v++) {
-            glTexCoord2f(s[v], t[v]);
-            glVertex3f((verticesDaFace[f][v][0] - 0.5f) * 2.0f,
-                       (verticesDaFace[f][v][1] - 0.5f) * 2.0f,
-                       (verticesDaFace[f][v][2] - 0.5f) * 2.0f);
-        }
+    for (v = 0; v < 4; v++) {
+        int k = (giroCeu[f] + v) % 4;               /* canto da célula deste vértice */
+        glTexCoord2f(cs[k], ct[k]);
+        glVertex3f((verticesDaFace[f][v][0] - 0.5f) * 2.0f,
+                   (verticesDaFace[f][v][1] - 0.5f) * 2.0f,
+                   (verticesDaFace[f][v][2] - 0.5f) * 2.0f);
+    }
     }
     glEnd();
 
