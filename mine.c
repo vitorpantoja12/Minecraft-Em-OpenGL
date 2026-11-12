@@ -1156,7 +1156,7 @@ ItemDrop itens[NUM_ITENS] = {
 };
 
 /* Desenha os itens espalhados pelo cenário */
-{
+void desenhaItensCenario(void){
     int i;
     float tempo = glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
 
@@ -2153,6 +2153,7 @@ void desenha(void)
     /* opacos antes dos semitransparentes: a mistura precisa do que está
        atrás já no buffer, e isso inclui o personagem */
     desenhaOpacos();
+   desenhaItensCenario();
     if (modoCamera == TERCEIRA_PESSOA)
         desenhaJogador();
     desenhaTransparentes();
