@@ -544,6 +544,64 @@ void coordenadasDaCelula(int celula, float *s0, float *t0, float *lado)
     *t0 = (celula / CELULAS_POR_LADO) * *lado;
 }
 
+
+/* Desenha um item como uma imagem que acompanha a direção da câmera */
+void desenhaItem(ItemDrop item, float tempo)
+{
+    float s0, t0, lado;
+    float altura;
+    float largura = 0.45f;
+
+    /* Movimento suave para cima e para baixo */
+    altura = item.y + 0.08f * sinf(tempo * 2.0f + item.fase);
+
+    glPushMatrix();
+
+    /* Posiciona o item no mundo */
+    glTranslatef(item.x, altura, item.z);
+
+    /* Gira o item para acompanhar a direção horizontal da câmera */
+    glRotatef(-yaw, 0.0f, 1.0f, 0.0f);
+
+    if (item.celula != SEM_TEXTURA) {
+        coordenadasDaCelula(item.celula, &s0, &t0, &lado);
+
+        glEnable(GL_TEXTURE_2D);
+        glColor3f(1.0f, 1.0f, 1.0f);
+
+        glBegin(GL_QUADS);
+            glTexCoord2f(s0, t0 + lado);
+            glVertex3f(-largura, 0.0f, 0.0f);
+
+            glTexCoord2f(s0 + lado, t0 + lado);
+            glVertex3f(largura, 0.0f, 0.0f);
+
+            glTexCoord2f(s0 + lado, t0);
+            glVertex3f(largura, 0.7f, 0.0f);
+
+            glTexCoord2f(s0, t0);
+            glVertex3f(-largura, 0.7f, 0.0f);
+        glEnd();
+    }
+    else {
+        /* Maçã provisória: um desenho vermelho */
+        glDisable(GL_TEXTURE_2D);
+        glColor3f(0.85f, 0.05f, 0.05f);
+
+        glBegin(GL_QUADS);
+            glVertex3f(-largura, 0.0f, 0.0f);
+            glVertex3f(largura, 0.0f, 0.0f);
+            glVertex3f(largura, 0.7f, 0.0f);
+            glVertex3f(-largura, 0.7f, 0.0f);
+        glEnd();
+    }
+
+    glPopMatrix();
+
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glEnable(GL_TEXTURE_2D);
+}
+
 /* ------------------------------------------------------------------ */
 /* Transparência: dois casos distintos                                */
 /*   recorte            folhas: cada texel é totalmente opaco ou      */
@@ -1081,6 +1139,30 @@ int alturaDoTerreno(int x, int z)
 /* ------------------------------------------------------------------ */
 
 unsigned char mundo[LADO][ALTURA_MUNDO][LADO];
+
+/* Itens largados no chão: ficam fora da matriz mundo */
+typedef struct {
+    float x, y, z;  /* posição no cenário */
+    int celula;     /* célula do atlas */
+    float fase;     /* diferença na flutuação */
+} ItemDrop;
+
+#define NUM_ITENS 3
+
+ItemDrop itens[NUM_ITENS] = {
+    { 2.5f, 3.05f, 10.5f, CEL_FOLHA,  0.0f },  /* muda */
+    { 9.5f, 3.05f, 10.5f, CEL_TERRA,  2.0f },  /* terra */
+    {14.5f, 3.05f, 10.5f, SEM_TEXTURA, 4.0f } /* maçã */
+};
+
+/* Desenha os itens espalhados pelo cenário */
+{
+    int i;
+    float tempo = glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
+
+    for (i = 0; i < NUM_ITENS; i++)
+        desenhaItem(itens[i], tempo);
+}
 
 /* 1 se (x, y, z) é uma posição válida da matriz                      */
 int dentroDoMundo(int x, int y, int z)
@@ -2074,6 +2156,7 @@ void desenha(void)
     if (modoCamera == TERCEIRA_PESSOA)
         desenhaJogador();
     desenhaTransparentes();
+  
     if (menuAberto)
         desenhaMenu();                      /* por cima de tudo */
 
