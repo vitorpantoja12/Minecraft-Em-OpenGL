@@ -550,6 +550,64 @@ void coordenadasDaCelula(int celula, float *s0, float *t0, float *lado)
     *t0 = (celula / CELULAS_POR_LADO) * *lado;
 }
 
+
+/* Desenha um item como uma imagem que acompanha a direção da câmera */
+void desenhaItem(ItemDrop item, float tempo)
+{
+    float s0, t0, lado;
+    float altura;
+    float largura = 0.45f;
+
+    /* Movimento suave para cima e para baixo */
+    altura = item.y + 0.08f * sinf(tempo * 2.0f + item.fase);
+
+    glPushMatrix();
+
+    /* Posiciona o item no mundo */
+    glTranslatef(item.x, altura, item.z);
+
+    /* Gira o item para acompanhar a direção horizontal da câmera */
+    glRotatef(-yaw, 0.0f, 1.0f, 0.0f);
+
+    if (item.celula != SEM_TEXTURA) {
+        coordenadasDaCelula(item.celula, &s0, &t0, &lado);
+
+        glEnable(GL_TEXTURE_2D);
+        glColor3f(1.0f, 1.0f, 1.0f);
+
+        glBegin(GL_QUADS);
+            glTexCoord2f(s0, t0 + lado);
+            glVertex3f(-largura, 0.0f, 0.0f);
+
+            glTexCoord2f(s0 + lado, t0 + lado);
+            glVertex3f(largura, 0.0f, 0.0f);
+
+            glTexCoord2f(s0 + lado, t0);
+            glVertex3f(largura, 0.7f, 0.0f);
+
+            glTexCoord2f(s0, t0);
+            glVertex3f(-largura, 0.7f, 0.0f);
+        glEnd();
+    }
+    else {
+        /* Maçã provisória: um desenho vermelho */
+        glDisable(GL_TEXTURE_2D);
+        glColor3f(0.85f, 0.05f, 0.05f);
+
+        glBegin(GL_QUADS);
+            glVertex3f(-largura, 0.0f, 0.0f);
+            glVertex3f(largura, 0.0f, 0.0f);
+            glVertex3f(largura, 0.7f, 0.0f);
+            glVertex3f(-largura, 0.7f, 0.0f);
+        glEnd();
+    }
+
+    glPopMatrix();
+
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glEnable(GL_TEXTURE_2D);
+}
+
 /* ------------------------------------------------------------------ */
 /* Transparência: dois casos distintos                                */
 /*   recorte            folhas: cada texel é totalmente opaco ou      */
@@ -561,8 +619,12 @@ void coordenadasDaCelula(int celula, float *s0, float *t0, float *lado)
 
 int passadaDoBloco(int tipo)
 {
-    if (tipo == FOLHA) return PASSADA_RECORTE;
-    if (tipo == VIDRO || tipo == AGUA) return PASSADA_TRANSLUCIDA;
+    if (tipo == FOLHA || tipo == PLANTA)
+        return PASSADA_RECORTE;
+
+    if (tipo == VIDRO || tipo == AGUA)
+        return PASSADA_TRANSLUCIDA;
+
     return PASSADA_OPACA;
 }
 
@@ -669,17 +731,98 @@ void casinhaEm(int x, int z)
 /* contra o vidro: desapareceria.                                     */
 /* ------------------------------------------------------------------ */
 
-/* desenha todos os blocos de uma passada, na ordem da matriz */
+/* Desenha uma planta usando dois planos verticais cruzados.
+   A textura usada é CEL_FOLHA, que já possui transparência
+   por magenta no atlas. */
+
+void desenhaPlanta(int x, int y, int z)
+{
+    float s0, t0, lado;
+
+    /* Obtém as coordenadas da textura da folha no atlas */
+    coordenadasDaCelula(CEL_FOLHA, &s0, &t0, &lado);
+
+    /* Desliga o descarte de faces traseiras.
+       Assim, a planta aparece dos dois lados. */
+    glDisable(GL_CULL_FACE);
+
+    /* Ativa a textura e o teste de transparência */
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.5f);
+
+    /* Cor branca para não alterar as cores originais da textura */
+    glColor3f(1.0f, 1.0f, 1.0f);
+
+    glPushMatrix();
+    glTranslatef((float)x, (float)y, (float)z);
+
+    /* Primeiro plano: diagonal de um canto ao outro */
+    glBegin(GL_QUADS);
+
+        glTexCoord2f(s0,       t0 + lado);
+        glVertex3f(0.15f, 0.0f, 0.15f);
+
+        glTexCoord2f(s0 + lado, t0 + lado);
+        glVertex3f(0.85f, 0.0f, 0.85f);
+
+        glTexCoord2f(s0 + lado, t0);
+        glVertex3f(0.85f, 0.9f, 0.85f);
+
+        glTexCoord2f(s0,       t0);
+        glVertex3f(0.15f, 0.9f, 0.15f);
+
+    glEnd();
+
+    /* Segundo plano: diagonal cruzada com o primeiro */
+    glBegin(GL_QUADS);
+
+        glTexCoord2f(s0,       t0 + lado);
+        glVertex3f(0.15f, 0.0f, 0.85f);
+
+        glTexCoord2f(s0 + lado, t0 + lado);
+        glVertex3f(0.85f, 0.0f, 0.15f);
+
+        glTexCoord2f(s0 + lado, t0);
+        glVertex3f(0.85f, 0.9f, 0.15f);
+
+        glTexCoord2f(s0,       t0);
+        glVertex3f(0.15f, 0.9f, 0.85f);
+
+    glEnd();
+
+    glPopMatrix();
+
+    /* Restaura os estados usados pelo restante do cenário */
+    glDisable(GL_ALPHA_TEST);
+    glEnable(GL_CULL_FACE);
+}
+
+
 static void desenhaPassada(int passada)
 {
     int x, y, z;
+    int tipo;
 
     for (x = 0; x < LADO; x++)
         for (y = 0; y < ALTURA_MUNDO; y++)
-            for (z = 0; z < LADO; z++)
-                if (mundo[x][y][z] != VAZIO &&
-                    passadaDoBloco(mundo[x][y][z]) == passada)
-                    blocoEm(mundo[x][y][z], x, y, z);
+            for (z = 0; z < LADO; z++) {
+
+                tipo = mundo[x][y][z];
+
+                if (tipo == VAZIO)
+                    continue;
+
+                if (passadaDoBloco(tipo) != passada)
+                    continue;
+
+                if (tipo == PLANTA) {
+                    desenhaPlanta(x, y, z);
+                }
+                else {
+                    blocoEm(tipo, x, y, z);
+                }
+            }
 }
 
 /* passadas 1 e 2 */
@@ -1003,6 +1146,30 @@ int alturaDoTerreno(int x, int z)
 
 unsigned char mundo[LADO][ALTURA_MUNDO][LADO];
 
+/* Itens largados no chão: ficam fora da matriz mundo */
+typedef struct {
+    float x, y, z;  /* posição no cenário */
+    int celula;     /* célula do atlas */
+    float fase;     /* diferença na flutuação */
+} ItemDrop;
+
+#define NUM_ITENS 3
+
+ItemDrop itens[NUM_ITENS] = {
+    { 2.5f, 3.05f, 10.5f, CEL_FOLHA,  0.0f },  /* muda */
+    { 9.5f, 3.05f, 10.5f, CEL_TERRA,  2.0f },  /* terra */
+    {14.5f, 3.05f, 10.5f, SEM_TEXTURA, 4.0f } /* maçã */
+};
+
+/* Desenha os itens espalhados pelo cenário */
+void desenhaItensCenario(void){
+    int i;
+    float tempo = glutGet(GLUT_ELAPSED_TIME) / 1000.0f;
+
+    for (i = 0; i < NUM_ITENS; i++)
+        desenhaItem(itens[i], tempo);
+}
+
 /* 1 se (x, y, z) é uma posição válida da matriz                      */
 int dentroDoMundo(int x, int y, int z)
 {
@@ -1147,7 +1314,14 @@ void construirMundo(void)
 
     arvoreEm(13, 6);                        /* no gramado, à direita da montanha */
     casinhaEm(4, 7);                        /* à esquerda de onde o personagem começa */
-
+ 
+    colocaBloco(PLANTA, 2, 3, 10);          /* Plantas espalhadas pelo gramado */
+    colocaBloco(PLANTA, 3, 3, 10);
+    colocaBloco(PLANTA, 9, 3, 10);
+    colocaBloco(PLANTA, 10, 3, 10);
+    colocaBloco(PLANTA, 8, 3, 12);
+    colocaBloco(PLANTA, 14, 3, 10);
+   
     nuvemEm(1, 2, 5, 3);                    /* sobre a montanha */
     nuvemEm(10, 0, 4, 2);                   /* sobre a árvore, mais ao fundo */
 }
@@ -2065,9 +2239,11 @@ void desenha(void)
     /* opacos antes dos semitransparentes: a mistura precisa do que está
        atrás já no buffer, e isso inclui o personagem */
     desenhaOpacos();
+   desenhaItensCenario();
     if (modoCamera == TERCEIRA_PESSOA)
         desenhaJogador();
     desenhaTransparentes();
+  
     if (menuAberto)
         desenhaMenu();                      /* por cima de tudo */
 
